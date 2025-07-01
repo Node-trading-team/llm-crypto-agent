@@ -1,0 +1,7 @@
+__pycache__
+*.env
+*.pdf
+*.sql
+*.csv
+
+code_archives/
