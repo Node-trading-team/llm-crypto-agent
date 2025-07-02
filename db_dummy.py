@@ -6,21 +6,26 @@ import random
 
 # --- 1. 기본 설정 및 DB 연결 ---
 client = MongoClient('mongodb://localhost:27017/')
-db = client['crypto_agent_db']
-# 이전 실행 데이터를 초기화하여 항상 새로운 상태에서 시작
-for collection_name in db.list_collection_names():
-    db[collection_name].drop()
-print("Previous database data cleared.")
 
-# --- 파라미터 변수 ---
 # 기획서에 명시된 5개의 전문 부서
 DEPARTMENTS = [
     "Trend_Analyst",
-    "Mean-Reversion_Specialist",
+    "Mean-Reversion_Specialist", 
     "Volatility_Scout",
     "Fundamental_Reader",
     "News-Sentiment_Reader"
 ]
+
+# 각 부서별로 개별 데이터베이스 생성 및 초기화
+dept_dbs = {}
+for dept in DEPARTMENTS:
+    dept_db = client[dept]
+    # 이전 실행 데이터를 초기화하여 항상 새로운 상태에서 시작
+    for collection_name in dept_db.list_collection_names():
+        dept_db[collection_name].drop()
+    dept_dbs[dept] = dept_db
+    print(f"Database '{dept}' cleared and ready.")
+
 TODAY_STR = datetime.date(2025, 6, 30).strftime("%Y-%m-%d")
 LOOP = 12
 EPISODE = 5
@@ -253,7 +258,7 @@ def create_feedback():
     }
 
 def create_strategy_update_agent_config():
-    """전략 업데이트 에이전트의 설정 데이터를 생성합니다. (strategy_cases_checklist 스키마와 동일)"""
+    """전략 업데이트 에이전트의 설정 데이터를 생성합니다."""
     return {
         "version": f"{TODAY_STR}_strategy_update_agent_1",
         "updated_at": get_utc_timestamp(),
@@ -289,7 +294,7 @@ def create_strategy_update_agent_config():
     }
 
 def create_memory_guideline_update_agent_config():
-    """기억 지침 업데이트 에이전트의 설정 데이터를 생성합니다. (memory_guideline 스키마와 동일)"""
+    """기억 지침 업데이트 에이전트의 설정 데이터를 생성합니다."""
     return {
         "version": f"{TODAY_STR}_memory_guideline_update_agent_1",
         "updated_at": get_utc_timestamp(),
@@ -300,111 +305,153 @@ def create_memory_guideline_update_agent_config():
         "style_guide": "기억 지침 업데이트 시, 명확하고 간결하며 측정 가능한 기준을 제시한다."
     }
 
-
 # --- 3. 컬렉션별 데이터 삽입 함수 ---
-# 각 함수는 특정 컬렉션의 역할과 데이터 구조를 명확히 보여줍니다.
 
-def insert_central_memory(db, dept, strategy_doc, guideline_doc):
+def insert_central_memory(dept_db, strategy_doc, guideline_doc):
     """
-    [Collection: central_memory]
-    에이전트의 핵심 두뇌 역할을 하는 전략 케이스와 기억 지침을 저장합니다.
-    데이터는 부서(dept)별로 격리됩니다.
+    central_memory 폴더 구조 생성:
+    - strategy_cases_checklist.json
+    - memory_guideline.json
     """
-    collection = db['central_memory']
-    collection.update_one(
-        {'dept': dept, 'type': 'strategy_cases_checklist'},
-        {'$set': {'dept': dept, 'type': 'strategy_cases_checklist', **strategy_doc}},
+    central_memory = dept_db['central_memory']
+    
+    # strategy_cases_checklist.json
+    central_memory.update_one(
+        {'_id': 'strategy_cases_checklist'},
+        {'$set': {'_id': 'strategy_cases_checklist', **strategy_doc}},
         upsert=True
     )
-    collection.update_one(
-        {'dept': dept, 'type': 'memory_guideline'},
-        {'$set': {'dept': dept, 'type': 'memory_guideline', **guideline_doc}},
+    
+    # memory_guideline.json  
+    central_memory.update_one(
+        {'_id': 'memory_guideline'},
+        {'$set': {'_id': 'memory_guideline', **guideline_doc}},
         upsert=True
     )
-    # print(f"   - Upserted central_memory for '{dept}'.")
 
-def insert_daily_snapshots(db, dept, snapshot_meta, data_docs):
+def insert_daily_snapshots(dept_db, date, loop, episode, snapshot_docs):
     """
-    [Collection: snapshots]
-    매일의 시장 상황, 포트폴리오, 의사결정, 업데이트된 기억의 스냅샷을 저장합니다.
+    daily_snapshots 폴더 구조 생성:
+    /{YYYY-MM-DD}/{loop}/{episode}/
+    ├─ market_snapshot.json
+    ├─ portfolio_snapshot.json  
+    ├─ trading_agent/
+    │  └─ decision.json
+    ├─ executions.arrow
+    └─ memory_update_snapshot/
+       ├─ trade_memory_short.json
+       ├─ trade_memory_mid.json
+       └─ trade_memory_long.json
     """
-    collection = db['snapshots']
-    for doc_type, doc_data in data_docs.items():
-        collection.update_one(
-            {**snapshot_meta, 'type': doc_type},
-            {'$set': {'type': doc_type, **doc_data, **snapshot_meta}},
-            upsert=True
-        )
-    # print(f"   - Upserted daily_snapshots for '{dept}' on {snapshot_meta['date']}.")
-
-def insert_executions_into_snapshots(db, snapshot_meta, executions_list):
-    """
-    [Collection: snapshots]
-    체결 로그 데이터를 기존 'snapshots' 컬렉션 내에 'executions' 타입의 문서로 저장합니다.
-    """
-    collection = db['snapshots']
-    # 'snapshots' 컬렉션에 새로운 타입의 문서로 체결 내역을 추가
-    collection.update_one(
-        {'dept': snapshot_meta['dept'], 'date': snapshot_meta['date'],
-         'loop': snapshot_meta['loop'], 'episode': snapshot_meta['episode'],
-         'type': 'executions'}, # 고유한 타입으로 구분
-        {'$set': {
-            'dept': snapshot_meta['dept'],
-            'date': snapshot_meta['date'],
-            'loop': snapshot_meta['loop'],
-            'episode': snapshot_meta['episode'],
-            'type': 'executions', # 문서 타입 지정
-            'executions_data': executions_list, # 체결 내역 리스트
-            'updated_at': get_utc_timestamp()
-        }},
+    daily_snapshots = dept_db['daily_snapshots']
+    
+    # 각 스냅샷 문서의 고유 ID 생성: {date}_{loop}_{episode}_{type}
+    base_id = f"{date}_{loop}_{episode}"
+    
+    # market_snapshot.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_market_snapshot"},
+        {'$set': {'_id': f"{base_id}_market_snapshot", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['market']}},
         upsert=True
     )
-    # print(f"   - Upserted executions_data into 'snapshots' collection for '{snapshot_meta['dept']}'.")
-
-def insert_episode_summary(db, dept, episode_meta, data_docs):
-    """
-    [Collection: episodes]
-    에피소드 종료 후 집계된 성과 지표(metrics)와 피드백 에이전트의 분석 결과를 저장합니다.
-    여기에 전략 및 기억 지침 업데이트 에이전트의 설정도 함께 저장합니다.
-    """
-    collection = db['episodes']
-    for doc_type, doc_data in data_docs.items():
-        collection.update_one(
-            {**episode_meta, 'type': doc_type},
-            {'$set': {'type': doc_type, **doc_data, **episode_meta}},
-            upsert=True
-        )
-    # print(f"   - Upserted episode_summary for '{dept}'.")
-
-def insert_episode_trades_into_episodes(db, episode_meta, episode_trades_list):
-    """
-    [Collection: episodes]
-    에피소드 전체의 거래 데이터를 기존 'episodes' 컬렉션 내에 'trades_data' 타입의 문서로 저장합니다.
-    """
-    collection = db['episodes']
-    # 'episodes' 컬렉션에 새로운 타입의 문서로 거래 내역을 추가
-    collection.update_one(
-        {'dept': episode_meta['dept'], 'loop': episode_meta['loop'],
-         'episode': episode_meta['episode'], 'type': 'trades_data'}, # 고유한 타입으로 구분
-        {'$set': {
-            'dept': episode_meta['dept'],
-            'loop': episode_meta['loop'],
-            'episode': episode_meta['episode'],
-            'type': 'trades_data', # 문서 타입 지정
-            'trades_data': episode_trades_list, # 거래 내역 리스트
-            'updated_at': get_utc_timestamp()
-        }},
+    
+    # portfolio_snapshot.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_portfolio_snapshot"},
+        {'$set': {'_id': f"{base_id}_portfolio_snapshot", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['portfolio']}},
         upsert=True
     )
-    # print(f"   - Upserted episode_trades_data into 'episodes' collection for '{episode_meta['dept']}'.")
+    
+    # trading_agent/decision.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_trading_agent_decision"},
+        {'$set': {'_id': f"{base_id}_trading_agent_decision", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['decision']}},
+        upsert=True
+    )
+    
+    # executions.arrow
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_executions"},
+        {'$set': {'_id': f"{base_id}_executions", 'date': date, 'loop': loop, 'episode': episode, 'executions_data': snapshot_docs['executions']}},
+        upsert=True
+    )
+    
+    # memory_update_snapshot/trade_memory_short.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_memory_update_snapshot_trade_memory_short"},
+        {'$set': {'_id': f"{base_id}_memory_update_snapshot_trade_memory_short", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['trade_memory_short']}},
+        upsert=True
+    )
+    
+    # memory_update_snapshot/trade_memory_mid.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_memory_update_snapshot_trade_memory_mid"},
+        {'$set': {'_id': f"{base_id}_memory_update_snapshot_trade_memory_mid", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['trade_memory_mid']}},
+        upsert=True
+    )
+    
+    # memory_update_snapshot/trade_memory_long.json
+    daily_snapshots.update_one(
+        {'_id': f"{base_id}_memory_update_snapshot_trade_memory_long"},
+        {'$set': {'_id': f"{base_id}_memory_update_snapshot_trade_memory_long", 'date': date, 'loop': loop, 'episode': episode, **snapshot_docs['trade_memory_long']}},
+        upsert=True
+    )
 
+def insert_episodes_meta(dept_db, loop, episode, episode_docs):
+    """
+    episodes_meta 폴더 구조 생성:
+    /{loop}/{episode}/
+    ├─ episode_trades.arrow
+    ├─ metrics.json
+    ├─ feedback_agent.json
+    ├─ strategy_update_agent.json
+    └─ memory_guideline_update_agent.json
+    """
+    episodes_meta = dept_db['episodes_meta']
+    
+    # 각 에피소드 문서의 고유 ID 생성: {loop}_{episode}_{type}
+    base_id = f"{loop}_{episode}"
+    
+    # episode_trades.arrow
+    episodes_meta.update_one(
+        {'_id': f"{base_id}_episode_trades"},
+        {'$set': {'_id': f"{base_id}_episode_trades", 'loop': loop, 'episode': episode, 'trades_data': episode_docs['trades_data']}},
+        upsert=True
+    )
+    
+    # metrics.json
+    episodes_meta.update_one(
+        {'_id': f"{base_id}_metrics"},
+        {'$set': {'_id': f"{base_id}_metrics", 'loop': loop, 'episode': episode, **episode_docs['metrics']}},
+        upsert=True
+    )
+    
+    # feedback_agent.json
+    episodes_meta.update_one(
+        {'_id': f"{base_id}_feedback_agent"},
+        {'$set': {'_id': f"{base_id}_feedback_agent", 'loop': loop, 'episode': episode, **episode_docs['feedback']}},
+        upsert=True
+    )
+    
+    # strategy_update_agent.json
+    episodes_meta.update_one(
+        {'_id': f"{base_id}_strategy_update_agent"},
+        {'$set': {'_id': f"{base_id}_strategy_update_agent", 'loop': loop, 'episode': episode, **episode_docs['strategy_update_agent_config']}},
+        upsert=True
+    )
+    
+    # memory_guideline_update_agent.json
+    episodes_meta.update_one(
+        {'_id': f"{base_id}_memory_guideline_update_agent"},
+        {'$set': {'_id': f"{base_id}_memory_guideline_update_agent", 'loop': loop, 'episode': episode, **episode_docs['memory_guideline_update_agent_config']}},
+        upsert=True
+    )
 
 # --- 4. 메인 실행 함수 ---
 
 def seed_database_for_presentation():
     """
-    모든 부서에 대한 더미 데이터를 생성하고, 구조화된 삽입 함수를 호출하여
-    데이터베이스의 전체 뼈대를 구축합니다.
+    5개 부서별로 개별 데이터베이스를 생성하고, 각 데이터베이스에 폴더 구조를 모방한 컬렉션을 구축합니다.
     """
     print("="*50)
     print("Starting database seeding for all 5 departments...")
@@ -412,63 +459,42 @@ def seed_database_for_presentation():
 
     for dept in DEPARTMENTS:
         print(f"\nProcessing Department: [ {dept} ]")
+        dept_db = dept_dbs[dept]
 
-        # 1. 중앙 기억 데이터 생성 및 삽입
+        # 1. central_memory 폴더 생성
         strategy_doc = create_strategy_cases_checklist(dept)
         guideline_doc = create_memory_guideline(dept)
-        insert_central_memory(db, dept, strategy_doc, guideline_doc)
-        print(f"   - Inserted central_memory (Strategies & Guidelines).")
+        insert_central_memory(dept_db, strategy_doc, guideline_doc)
+        print(f"   - Created central_memory/ (strategy_cases_checklist.json, memory_guideline.json)")
 
-        # 2. 일일 스냅샷 데이터 생성 및 삽입
-        snapshot_meta = {
-            'dept': dept,
-            'date': TODAY_STR,
-            'loop': LOOP,
-            'episode': EPISODE
-        }
+        # 2. daily_snapshots 폴더 생성
         snapshot_docs = {
             'market': create_market_snapshot(),
             'portfolio': create_portfolio_snapshot(),
             'decision': create_decision(dept, strategy_doc['cases'][0]['id']),
+            'executions': create_executions_data(),
             'trade_memory_short': create_trade_memory('short'),
             'trade_memory_mid': create_trade_memory('mid'),
             'trade_memory_long': create_trade_memory('long'),
         }
-        insert_daily_snapshots(db, dept, snapshot_meta, snapshot_docs)
-        print(f"   - Inserted daily_snapshots (Market, Portfolio, Decision, Memory).")
+        insert_daily_snapshots(dept_db, TODAY_STR, LOOP, EPISODE, snapshot_docs)
+        print(f"   - Created daily_snapshots/{TODAY_STR}/{LOOP}/{EPISODE}/ (all snapshot files)")
 
-        # 3. 체결 데이터 (JSON) 생성 및 스냅샷 컬렉션에 삽입
-        executions_list = create_executions_data()
-        insert_executions_into_snapshots(db, snapshot_meta, executions_list)
-        print(f"   - Inserted executions_data into 'snapshots' collection (type: 'executions').")
-
-        # 4. 에피소드 요약 및 에이전트 설정 데이터 생성 및 삽입
-        episode_meta = {
-            'dept': dept,
-            'loop': LOOP,
-            'episode': EPISODE
-        }
+        # 3. episodes_meta 폴더 생성
         episode_docs = {
+            'trades_data': create_episode_trades_data(),
             'metrics': create_metrics(),
             'feedback': create_feedback(),
-            # strategy_update_agent_config와 memory_guideline_update_agent_config는 이제
-            # create_strategy_cases_checklist 및 create_memory_guideline과 동일한 스키마를 가집니다.
             'strategy_update_agent_config': create_strategy_update_agent_config(),
             'memory_guideline_update_agent_config': create_memory_guideline_update_agent_config(),
         }
-        insert_episode_summary(db, dept, episode_meta, episode_docs)
-        print(f"   - Inserted episode_summary (Metrics & Feedback) and Agent configs.")
-
-        # 5. 에피소드 통합 거래 데이터 (JSON) 생성 및 에피소드 컬렉션에 삽입
-        episode_trades_list = create_episode_trades_data()
-        insert_episode_trades_into_episodes(db, episode_meta, episode_trades_list)
-        print(f"   - Inserted episode_trades_data into 'episodes' collection (type: 'trades_data').")
+        insert_episodes_meta(dept_db, LOOP, EPISODE, episode_docs)
+        print(f"   - Created episodes_meta/{LOOP}/{EPISODE}/ (all episode files)")
 
     print("\n" + "="*50)
     print("Database seeding completed successfully for all departments.")
     print("="*50)
     client.close()
-
 
 if __name__ == "__main__":
     seed_database_for_presentation()
