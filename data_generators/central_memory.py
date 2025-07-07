@@ -1,8 +1,7 @@
 from config import get_utc_timestamp, TODAY_STR
 
-def create_strategy_cases_checklist(dept):
-    """부서(dept) 특성에 맞는 전략 케이스와 체크리스트를 생성합니다."""
-    # 부서별로 다른 전략 케이스 예시
+def create_strategy_cases(dept):
+    """부서(dept) 특성에 맞는 전략 케이스를 생성합니다."""
     cases = {
         "Trend_Analyst": {
             "id": "ma_cross_long",
@@ -42,26 +41,32 @@ def create_strategy_cases_checklist(dept):
         "position_side": "long",
         "preferred_action": "long"
     }
-    specific_case = {**cases[dept], **base_case} # 딕셔너리 언패킹 사용
-
+    specific_case = {**cases[dept], **base_case}
     return {
         "version": f"{TODAY_STR}_1",
         "updated_at": get_utc_timestamp(),
-        "cases": [specific_case],
-        "checklists": [
-            {
-                "id": "min_rr",
-                "item": "리스크/보상 비율 >= 1.5",
-                "metric": "rr",
-                "threshold": 1.5,
-                "critical": True
-            }
-        ]
+        "cases": [specific_case]
+    }
+
+def create_strategy_checklist(dept):
+    """공통 체크리스트 (필요시 부서별로 커스터마이즈 가능)"""
+    # 필요하다면 부서별로 분기 처리 가능
+    checklist = [
+        {
+            "id": "min_rr",
+            "item": "리스크/보상 비율 >= 1.5",
+            "metric": "rr",
+            "threshold": 1.5,
+            "critical": True
+        }
+    ]
+    return {
+        "version": f"{TODAY_STR}_1",
+        "updated_at": get_utc_timestamp(),
+        "checklists": checklist
     }
 
 def create_memory_guideline(dept):
-    """부서(dept) 특성에 맞는 기억 지침을 생성합니다."""
-    # 부서별로 집중하는 메모리 규칙이 다를 수 있습니다.
     style_guide_map = {
         "Trend_Analyst": "추세의 강도와 지속성을 중심으로 기록한다.",
         "Mean-Reversion_Specialist": "과매수/과매도 지표의 반전 성공/실패 사례를 중심으로 기록한다.",
@@ -82,25 +87,30 @@ def create_memory_guideline(dept):
 def insert_central_memory(dept_db, dept_name):
     """
     central_memory 폴더 구조 생성:
-    - strategy_cases_checklist.json
+    - strategy_cases.json
+    - strategy_checklist.json
     - memory_guideline.json
     """
     central_memory = dept_db['central_memory']
-    
+
     # 문서 생성
-    strategy_doc = create_strategy_cases_checklist(dept_name)
+    cases_doc = create_strategy_cases(dept_name)
+    checklist_doc = create_strategy_checklist(dept_name)
     guideline_doc = create_memory_guideline(dept_name)
-    
-    # strategy_cases_checklist.json
+
+    # 각각 별도 저장
     central_memory.update_one(
-        {'_id': 'strategy_cases_checklist'},
-        {'$set': {'_id': 'strategy_cases_checklist', **strategy_doc}},
+        {'_id': 'strategy_cases'},
+        {'$set': {'_id': 'strategy_cases', **cases_doc}},
         upsert=True
     )
-    
-    # memory_guideline.json  
+    central_memory.update_one(
+        {'_id': 'strategy_checklist'},
+        {'$set': {'_id': 'strategy_checklist', **checklist_doc}},
+        upsert=True
+    )
     central_memory.update_one(
         {'_id': 'memory_guideline'},
         {'$set': {'_id': 'memory_guideline', **guideline_doc}},
         upsert=True
-    ) 
+    )
