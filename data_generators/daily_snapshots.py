@@ -15,59 +15,59 @@ def convert_market_data_to_symbols_format(market_data_dict):
         symbols 딕셔너리 (market_snapshot.json 형태)
     """
     symbols = {}
-    
+
     for symbol, data in market_data_dict.items():
         chart_data = data.get('chart_data', {})
         technical_indicators = data.get('technical_indicators', {})
         
-        # 기본 가격/거래량 정보
+        # 기본 가격/거래량
         symbol_data = {
-            "p": chart_data.get('close', 0.0),  # 현재가 (종가)
-            "v": chart_data.get('volume', 0.0)  # 거래량
+            "p": chart_data.get('close', 0.0),
+            "v": chart_data.get('volume', 0.0)
         }
         
-        # 기술적 지표 추가
-        # RSI 14
-        rsi_data = technical_indicators.get('RSI', {})
-        if 'RSI-14' in rsi_data:
-            symbol_data['rsi14'] = rsi_data['RSI-14']
-        
-        # MACD (기본 12-26-9)
-        macd_data = technical_indicators.get('MACD', {})
-        if 'MACD-12-26-9' in macd_data:
-            symbol_data['macd'] = macd_data['MACD-12-26-9']
-        elif 'MACDh-12-26-9' in macd_data:  # 히스토그램이 있으면 사용
-            symbol_data['macd'] = macd_data['MACDh-12-26-9']
-        
-        # 추가 기술적 지표들 (선택적)
-        # MA 20
-        ma_data = technical_indicators.get('MA', {})
-        if 'MA-20' in ma_data:
-            symbol_data['ma20'] = ma_data['MA-20']
-            
-        # EMA 20  
-        ema_data = technical_indicators.get('EMA', {})
-        if 'EMA-20' in ema_data:
-            symbol_data['ema20'] = ema_data['EMA-20']
-            
-        # 볼린저 밴드 (20)
-        bb_data = technical_indicators.get('BBANDS', {})
-        if '20' in bb_data:
-            bb_20 = bb_data['20']
-            if 'BBU' in bb_20:
-                symbol_data['bb_upper'] = bb_20['BBU']
-            if 'BBL' in bb_20:
-                symbol_data['bb_lower'] = bb_20['BBL']
-            if 'BBM' in bb_20:
-                symbol_data['bb_middle'] = bb_20['BBM']
-        
-        # ATR 14
-        atr_data = technical_indicators.get('ATR', {})
-        if 'ATR-14' in atr_data:
-            symbol_data['atr14'] = atr_data['ATR-14']
-            
+        # ========== 주요 지표들 ========== #
+        # RSI
+        for period, val in technical_indicators.get('RSI', {}).items():
+            k = f"rsi{period.split('-')[-1]}"
+            symbol_data[k] = val
+        # MACD (히스토그램 포함)
+        for macd_name, macd_val in technical_indicators.get('MACD', {}).items():
+            symbol_data[macd_name.lower()] = macd_val
+        # MA, EMA (전부 다 담기)
+        for k, v in technical_indicators.get('MA', {}).items():
+            symbol_data[k.lower()] = v
+        for k, v in technical_indicators.get('EMA', {}).items():
+            symbol_data[k.lower()] = v
+        # 볼린저밴드
+        for bb_period, bb_val in technical_indicators.get('BBANDS', {}).items():
+            for bb_type, bb in bb_val.items():
+                symbol_data[f'bb{bb_type.lower()}_{bb_period}'] = bb
+        # ATR
+        for k, v in technical_indicators.get('ATR', {}).items():
+            symbol_data[k.lower()] = v
+        # Ichimoku
+        for k, v in technical_indicators.get('ICHIMOKU', {}).items():
+            symbol_data[k.lower()] = v
+        # Supertrend
+        for period, st in technical_indicators.get('SUPERTREND', {}).items():
+            for typ, val in st.items():
+                symbol_data[f'supert_{typ.lower()}_{period}'] = val
+        # 피보나치
+        for k, v in technical_indicators.get('FIB', {}).items():
+            symbol_data[k.lower()] = v
+        # OBV
+        for k, v in technical_indicators.get('OBV', {}).items():
+            symbol_data[k.lower()] = v
+        # STOCH
+        for period, st in technical_indicators.get('STOCH', {}).items():
+            for typ, val in st.items():
+                symbol_data[f"stoch{typ.lower()}_{period}"] = val
+
+        # ========== 기타 지표 추가시 위와 같은 패턴 ========== #
+
         symbols[symbol] = symbol_data
-    
+
     return symbols
 
 def create_market_snapshot(market_data_dict=None):
