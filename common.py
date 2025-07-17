@@ -101,78 +101,77 @@ def fetch_historical_klines(binance_client, symbol, interval, start_str, end_str
     return df
 
 def calculate_all_indicators(df):
-    # 지표 계산에 필요한 최소 데이터 개수 확인
-    # MA 200, Ichimoku 52가 가장 긴 기간이므로, 최소 200개 이상의 캔들이 필요합니다.
-    if df.empty or len(df) < max(200, 52):
-        print("지표 계산에 필요한 데이터가 부족합니다.")
-        return df # 원본 DataFrame 반환 (지표 열 없이)
+    """길이에 맞는 지표만 계산하고, 예상치 못한 예외는 건너뛴다."""
+    if df.empty:
+        print("지표 계산용 데이터가 부족합니다.")
+        return df
 
-    print("기술 지표 계산 시작...")
+    df = df.dropna(subset=["high", "low", "close", "volume"]).copy()
 
-    # 이동 평균 (MA) - 종가 기준
+    # ───────── MA / EMA ─────────
     for p in [5, 10, 20, 50, 60, 100, 200]:
-        df.ta.sma(close=df["close"], length=p, append=True)
-        df.ta.ema(close=df["close"], length=p, append=True)
-    
-    # MACD - 종가 기준
-    for fast, slow, sig in [(12,26,9), (24,52,18), (19,39,9)]:
-        df.ta.macd(close=df["close"], fast=fast, slow=slow, signal=sig, append=True)
+        if len(df) >= p:
+            # df.ta.sma(length=p, append=True)
+            df.ta.ema(length=p, append=True)
 
-    # RSI - 종가 기준
-    for L in [7,14,21]:
-        df.ta.rsi(close=df["close"], length=L, append=True)
+    # ───────── MACD (길이 + try/except) ─────────
+    for fast, slow, sig in [(12, 26, 9), (24, 52, 18), (19, 39, 9)]:
+        need = slow + sig                    # 안전 최소 길이
+        if len(df) >= need:
+            try:
+                df.ta.macd(fast=fast, slow=slow, signal=sig, append=True)
+            except Exception as e:
+                print(f"[WARN] MACD({fast},{slow},{sig}) 계산 실패 → 건너뜀: {e}")
 
-    # 스토캐스틱 오실레이터 - 고가, 저가, 종가 기준 (표준 계산 방식)
-    for k, d in [(5,3),(9,3),(14,3)]:
-        df.ta.stoch(high=df["high"], low=df["low"], close=df["close"], k=k, d=d, append=True)
+    # ───────── RSI ─────────
+    for L in [7, 14, 21]:
+        if len(df) >= L:
+            df.ta.rsi(length=L, append=True)
 
-    # 볼린저 밴드 - 종가 기준
-    for L in [10,20,50]:
-        df.ta.bbands(close=df["close"], length=L, std=2, append=True)
+    # ───────── Stochastic ─────────
+    for k, d in [(5, 3), (9, 3), (14, 3)]:
+        need = k + d + 1
+        if len(df) >= need:
+            try:
+                df.ta.stoch(k=k, d=d, append=True)
+            except Exception as e:
+                print(f"[WARN] Stoch(k={k},d={d}) 계산 실패: {e}")
 
-    # ATR - 고가, 저가, 종가 기준 (표준 계산 방식)
-    for L in [7,14,28]:
-        df.ta.atr(high=df["high"], low=df["low"], close=df["close"], length=L, append=True)
+    # ───────── Bollinger Bands ─────────
+    for L in [10, 20, 50]:
+        if len(df) >= L:
+            df.ta.bbands(length=L, std=2, append=True)
 
-    # OBV 및 OBV SMA - 종가 및 거래량 기준
-    df.ta.obv(close=df["close"], volume=df["volume"], append=True)
+    # ───────── ATR ─────────
+    for L in [7, 14, 28]:
+        if len(df) >= L:
+            df.ta.atr(length=L, append=True)
 
-    for L in [10,20,50]:
-        # OBV의 이동 평균 계산
-        df.ta.sma(close=df["OBV"], length=L, append=True, prefix="OBV_")
+    # ───────── OBV ─────────
+    if len(df) >= 2:
+        df.ta.obv(append=True)
+        for L in [10, 20, 50]:
+            if len(df) >= L:
+                df.ta.sma(close=df["OBV"], length=L, append=True, prefix="OBV_")
 
-    # Ichimoku Cloud - 고가, 저가, 종가 기준
-    df.ta.ichimoku(high=df["high"], low=df["low"], close=df["close"],
-                   tenkan=9, kijun=26, senkou_b=52,
-                   append=True)
-    
-    # Supertrend - 고가, 저가, 종가 기준
-    for L in [10,14,21]:
-        df.ta.supertrend(high=df["high"], low=df["low"], close=df["close"],
-                         length=L, multiplier=3, append=True)
-        
-    # 피보나치 되돌림 (open_time 인덱스 기준, 최근 1개월)
-    fib_levels = {}
-    recent_data_for_fib = df.tail(30)  # open_time 인덱스 기준 최근 30개 캔들
-    if not recent_data_for_fib.empty and len(recent_data_for_fib) > 1:
-        recent_high = recent_data_for_fib['high'].max()
-        recent_low = recent_data_for_fib['low'].min()
-        price_range = recent_high - recent_low
-        fib_ratios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618]
-        rising = recent_data_for_fib['close'].iloc[-1] > recent_data_for_fib['close'].iloc[0]
-        for ratio in fib_ratios:
-            if rising:
-                level = recent_high - price_range * ratio
-            else:
-                level = recent_low  + price_range * ratio
-            key = f"FIB_{ratio}"
-            fib_levels[key] = level
-        for key, value in fib_levels.items():
-            df[key] = value
-        print(f"피보나치 되돌림 수준 (최근 1개월 고점 {recent_high:.2f}, 저점 {recent_low:.2f} 기준, open_time 기준) 계산 완료.")
-    else:
-        print("최근 1개월 데이터가 부족하여 피보나치 되돌림을 계산할 수 없습니다.")
-    print("기술 지표 계산 완료.")
+    # ───────── Ichimoku ─────────
+    if len(df) >= 52:
+        df.ta.ichimoku(tenkan=9, kijun=26, senkou_b=52, append=True)
+
+    # ───────── Supertrend ─────────
+    for L in [10, 14, 21]:
+        if len(df) >= L:
+            df.ta.supertrend(length=L, multiplier=3, append=True)
+
+    # ───────── Fibonacci ─────────
+    recent = df.tail(30)
+    if len(recent) > 1:
+        hi, lo = recent["high"].max(), recent["low"].min()
+        span = hi - lo
+        rising = recent["close"].iloc[-1] > recent["close"].iloc[0]
+        for r in [0, .236, .382, .5, .618, .786, 1, 1.272, 1.618]:
+            df[f"FIB_{r}"] = (hi - span * r) if rising else (lo + span * r)
+
     return df
 
 # MongoDB에 저장할 시장 데이터 계층 구조 준비

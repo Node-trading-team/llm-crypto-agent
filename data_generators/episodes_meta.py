@@ -3,10 +3,10 @@ import random
 from config import get_utc_timestamp, TODAY_STR, LOOP, EPISODE
 
 def create_episode_trades_data():
-    """에피소드 거래 데이터를 JSON(딕셔너리 리스트) 형식으로 생성합니다."""
+    """체결 데이터 (스키마에 맞는 컬럼명 사용)"""
     df = pd.DataFrame(
         {
-            'ts': [pd.Timestamp.now()],
+            'ts': [pd.Timestamp.now().isoformat()],  # ISO 8601
             'symbol': ['BTCUSDT'],
             'position_side': ['long'],
             'side': ['buy'],
@@ -18,142 +18,207 @@ def create_episode_trades_data():
             'realized_pnl': [0.0],
             'cum_realized_pnl': [0.0],
             'slippage_pct': [0.0],
-            'strategy_case_id': ['test_case'],
-            'decision_ts': [pd.Timestamp.now()],
-            'loop': LOOP,
-            'episode': EPISODE
+            'strategy_case_id': ['rsi_macd_long'],
+            'decision_ts': [pd.Timestamp.now().isoformat()],
+            'loop': [LOOP],
+            'episode': [EPISODE]
         }
     )
     return df.to_dict(orient='records')
 
 def create_metrics():
-    """성과 지표 데이터를 생성합니다."""
+    """metrics.json (스키마 준수)"""
+    case_stats = {
+        "rsi_macd_long": {"trades": 5, "win": 4, "pnl": 72.0},
+        "breakout_short": {"trades": 3, "win": 1, "pnl": -25.0}
+    }
     return {
         "episode_id": f"{LOOP}_{EPISODE}",
         "start_ts": "2025-06-28T23:00:00Z",
-        "end_ts": "2025-06-30T23:59:59Z",
+        "end_ts": "2025-06-29T23:59:59Z",
         "total_realized_pnl": round(random.uniform(-50, 200), 2),
+        "avg_trade_rr": round(random.uniform(1.0, 2.5), 2),
         "win_rate": round(random.uniform(0.4, 0.7), 2),
-        "sharpe_ratio": round(random.uniform(0.5, 2.0), 2)
+        "max_drawdown_pct": round(random.uniform(-5, 0), 2),
+        "sharpe_ratio": round(random.uniform(0.5, 2.0), 2),
+        "avg_slippage_pct": round(random.uniform(-0.2, 0.2), 3),
+        "checklist_pass_rate": round(random.uniform(0.7, 1.0), 2),
+        "var_95_usd": round(random.uniform(-300, 0), 1),
+        "case_stats": case_stats
     }
 
-def create_feedback():
-    """피드백 데이터를 생성합니다."""
+def create_problem_recognition_agent():
+    """problem_recognition_agent.json"""
     return {
         "episode_id": f"{LOOP}_{EPISODE}",
         "generated_at": get_utc_timestamp(),
-        "summary": {
-            "overall_grade": random.choice(["A", "B+", "B-", "C"]),
-            "key_stat": "PnL +102.5, Sharpe 1.43"
-        },
-        "problem_recognition": [],
-        "hypotheses": [],
-        "recommendations": {}
+        "problem_recognition": [
+            {
+                "id": "pr1",
+                "description": "평균 진입가가 지나치게 높음",
+                "evidence": ["trade_001", "rsi_macd_long"]
+            },
+            {
+                "id": "pr2",
+                "description": "과도한 슬리피지 발생",
+                "evidence": ["trade_002"]
+            }
+        ]
     }
 
-def create_strategy_update_agent_config():
-    """전략 업데이트 에이전트의 설정 데이터를 생성합니다."""
+def create_hypothesis_agent():
+    """hypothesis_agent.json"""
     return {
-        "version": f"{TODAY_STR}_strategy_update_agent_1",
+        "episode_id": f"{LOOP}_{EPISODE}",
+        "generated_at": get_utc_timestamp(),
+        "hypotheses": [
+            {
+                "ref": "pr1",
+                "hypothesis": "진입 타이밍 지연으로 인한 가격 상승"
+            },
+            {
+                "ref": "pr2",
+                "hypothesis": "시장가 주문 사용 증가 때문"
+            }
+        ]
+    }
+
+def create_strategy_cases():
+    """strategy_cases.json (스키마 준수)"""
+    return {
+        "version": f"{TODAY_STR}_1",
         "updated_at": get_utc_timestamp(),
         "cases": [
             {
-                "id": "model_retrain_trigger",
-                "name": "모델 재학습 트리거 조건",
-                "condition": "SharpeRatio < 1.0 or PnL_Drop > 0.05",
-                "confidence": 0.95,
-                "predicted_scenario": "전략 성능 저하 감지",
-                "recommended_response": "전략 모델 재학습 및 배포",
-                "market": "n/a",
-                "position_side": "n/a",
-                "preferred_action": "retrain_strategy_model"
+                "id": "rsi_macd_long",
+                "name": "RSI<30 & MACD- 진입",
+                "condition": "RSI14 < 30 AND MACD < 0",
+                "predicted_scenario": "과매도 구간에서 매수세 반등 가능성",
+                "recommended_response": "저가 매수 후 RR 2.0 지점 부분 익절",
+                "market": "futures",
+                "position_side": "long",
+                "preferred_action": "long",
+                "confidence": 0.74
+            },
+            {
+                "id": "breakout_short",
+                "name": "BB 하단 돌파 숏",
+                "condition": "Price < BB_Lower",
+                "predicted_scenario": "지지선 이탈 후 추가 하락 가능성",
+                "recommended_response": "지지선 이탈시 부분 진입, RR 1.7 지점 익절",
+                "market": "futures",
+                "position_side": "short",
+                "preferred_action": "short",
+                "confidence": 0.71
             }
-        ],
+        ]
+    }
+
+def create_strategy_checklists():
+    """strategy_checklists.json (스키마 준수)"""
+    return {
+        "version": f"{TODAY_STR}_1",
+        "updated_at": get_utc_timestamp(),
         "checklists": [
             {
-                "id": "data_freshness_check",
-                "item": "최신 시장 데이터 확보 여부",
-                "metric": "data_age_hours",
-                "threshold": 24,
+                "id": "min_rr",
+                "item": "리스크/보상 ≥ 1.5",
+                "metric": "rr",
+                "threshold": 1.5,
                 "critical": True
             },
             {
-                "id": "compute_resource_check",
-                "item": "재학습 컴퓨팅 자원 확인",
-                "metric": "cpu_utilization_pct",
-                "threshold": 80,
+                "id": "max_drawdown",
+                "item": "MDD ≤ 5%",
+                "metric": "drawdown_pct",
+                "threshold": 5.0,
                 "critical": False
             }
         ]
     }
 
-def create_memory_guideline_update_agent_config():
-    """기억 지침 업데이트 에이전트의 설정 데이터를 생성합니다."""
+def create_memory_guideline():
+    """memory_guideline.json (스키마 준수)"""
     return {
-        "version": f"{TODAY_STR}_memory_guideline_update_agent_1",
+        "version": f"{TODAY_STR}_1",
         "updated_at": get_utc_timestamp(),
-        "short_memory_rule": "최근 7일간의 피드백 분석 결과를 바탕으로 단기 기억 지침을 조정한다.",
-        "mid_memory_rule": "지난 30일간의 에피소드 요약에서 반복되는 문제점을 식별하여 중기 기억 지침을 개선한다.",
-        "long_memory_rule": "분기별 전체 성능 지표를 검토하여 장기 기억 지침의 방향성을 설정한다.",
-        "length_limit_tokens": 500, # 업데이트 에이전트의 규칙은 더 많은 토큰을 필요로 할 수 있음
-        "style_guide": "기억 지침 업데이트 시, 명확하고 간결하며 측정 가능한 기준을 제시한다."
+        "short_memory_rule": "최근 5~20일간 시장 주요 변화와 수익률을 중심으로 요약한다.",
+        "mid_memory_rule": "최근 20~60일간 주요 전략별 성공/실패 사례 분석을 중점적으로 기록한다.",
+        "long_memory_rule": "60일 이상의 거시 트렌드 및 지표 변화를 추적한다.",
+        "length_limit_tokens": 350,
+        "style_guide": "모든 용어와 톤을 부서 기준에 맞춰 일관되게 기록한다."
     }
 
 def insert_episodes_meta(dept_db, dept_name):
     """
-    episodes_meta 폴더 구조 생성:
-    /{loop}/{episode}/
-    ├─ episode_trades.arrow
-    ├─ metrics.json
-    ├─ feedback_agent.json
-    ├─ strategy_update_agent.json
-    └─ memory_guideline_update_agent.json
+    episodes_meta/{loop}/{episode}/ 하위에 각 JSON 문서를 폴더+파일명(_id)으로 저장
     """
     episodes_meta = dept_db['episodes_meta']
-    
-    # 에피소드 문서들 생성
-    episode_docs = {
-        'trades_data': create_episode_trades_data(),
-        'metrics': create_metrics(),
-        'feedback': create_feedback(),
-        'strategy_update_agent_config': create_strategy_update_agent_config(),
-        'memory_guideline_update_agent_config': create_memory_guideline_update_agent_config(),
-    }
-    
-    # 각 에피소드 문서의 고유 ID 생성: {loop}_{episode}_{type}
-    base_id = f"{LOOP}_{EPISODE}"
-    
-    # episode_trades.arrow
+    loop, episode = LOOP, EPISODE
+    base_path = f"{loop}/{episode}/"
+
+    # 1. episode_trades.json
     episodes_meta.update_one(
-        {'_id': f"{base_id}_episode_trades"},
-        {'$set': {'_id': f"{base_id}_episode_trades", 'loop': LOOP, 'episode': EPISODE, 'trades_data': episode_docs['trades_data']}},
+        {'_id': f"{base_path}episode_trades.json"},
+        {'$set': {
+            '_id': f"{base_path}episode_trades.json",
+            'trades': create_episode_trades_data()
+        }},
         upsert=True
     )
-    
-    # metrics.json
+
+    # 2. metrics.json
     episodes_meta.update_one(
-        {'_id': f"{base_id}_metrics"},
-        {'$set': {'_id': f"{base_id}_metrics", 'loop': LOOP, 'episode': EPISODE, **episode_docs['metrics']}},
+        {'_id': f"{base_path}metrics.json"},
+        {'$set': {
+            '_id': f"{base_path}metrics.json",
+            **create_metrics()
+        }},
         upsert=True
     )
-    
-    # feedback_agent.json
+
+    # 3. feedback_agent/problem_recognition_agent.json
     episodes_meta.update_one(
-        {'_id': f"{base_id}_feedback_agent"},
-        {'$set': {'_id': f"{base_id}_feedback_agent", 'loop': LOOP, 'episode': EPISODE, **episode_docs['feedback']}},
+        {'_id': f"{base_path}feedback_agent/problem_recognition_agent.json"},
+        {'$set': {
+            '_id': f"{base_path}feedback_agent/problem_recognition_agent.json",
+            **create_problem_recognition_agent()
+        }},
         upsert=True
     )
-    
-    # strategy_update_agent.json
+    # 4. feedback_agent/hypothesis_agent.json
     episodes_meta.update_one(
-        {'_id': f"{base_id}_strategy_update_agent"},
-        {'$set': {'_id': f"{base_id}_strategy_update_agent", 'loop': LOOP, 'episode': EPISODE, **episode_docs['strategy_update_agent_config']}},
+        {'_id': f"{base_path}feedback_agent/hypothesis_agent.json"},
+        {'$set': {
+            '_id': f"{base_path}feedback_agent/hypothesis_agent.json",
+            **create_hypothesis_agent()
+        }},
         upsert=True
     )
-    
-    # memory_guideline_update_agent.json
+    # 5. case_update_agent/strategy_cases.json
     episodes_meta.update_one(
-        {'_id': f"{base_id}_memory_guideline_update_agent"},
-        {'$set': {'_id': f"{base_id}_memory_guideline_update_agent", 'loop': LOOP, 'episode': EPISODE, **episode_docs['memory_guideline_update_agent_config']}},
+        {'_id': f"{base_path}case_update_agent/strategy_cases.json"},
+        {'$set': {
+            '_id': f"{base_path}case_update_agent/strategy_cases.json",
+            **create_strategy_cases()
+        }},
         upsert=True
-    ) 
+    )
+    # 6. checklist_update_agent/strategy_checklists.json
+    episodes_meta.update_one(
+        {'_id': f"{base_path}checklist_update_agent/strategy_checklists.json"},
+        {'$set': {
+            '_id': f"{base_path}checklist_update_agent/strategy_checklists.json",
+            **create_strategy_checklists()
+        }},
+        upsert=True
+    )
+    # 7. memory_guideline_update_agent/memory_guideline.json
+    episodes_meta.update_one(
+        {'_id': f"{base_path}memory_guideline_update_agent/memory_guideline.json"},
+        {'$set': {
+            '_id': f"{base_path}memory_guideline_update_agent/memory_guideline.json",
+            **create_memory_guideline()
+        }},
+        upsert=True
+    )
